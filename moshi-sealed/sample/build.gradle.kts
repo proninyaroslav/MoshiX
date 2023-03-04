@@ -17,8 +17,8 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-  kotlin("jvm")
-  id("com.google.devtools.ksp")
+  alias(libs.plugins.kotlinJvm)
+  alias(libs.plugins.ksp)
 }
 
 dependencies {
@@ -42,8 +42,5 @@ val generatedAnnotation = "javax.annotation.processing.Generated"
 ksp { arg("moshi.generated", generatedAnnotation) }
 
 tasks.withType<KotlinCompile>().configureEach {
-  kotlinOptions {
-    @Suppress("SuspiciousCollectionReassignment")
-    freeCompilerArgs += "-opt-in=kotlin.ExperimentalStdlibApi"
-  }
+  compilerOptions { freeCompilerArgs.add("-opt-in=kotlin.ExperimentalStdlibApi") }
 }

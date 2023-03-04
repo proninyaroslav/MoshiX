@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 /*
  * Copyright (C) 2020 Zac Sweers
  *
@@ -15,9 +17,9 @@
  */
 
 plugins {
-  kotlin("jvm")
-  id("com.google.devtools.ksp")
-  id("com.vanniktech.maven.publish")
+  alias(libs.plugins.kotlinJvm)
+  alias(libs.plugins.ksp)
+  alias(libs.plugins.mavenPublish)
 }
 
 // --add-opens for kapt to work. KGP covers this for us but local JVMs in tests do not
@@ -34,6 +36,14 @@ tasks.withType<Test>().configureEach {
     "--add-opens=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
     "--add-opens=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED"
   )
+}
+
+tasks.withType<KotlinCompile>().configureEach {
+  compilerOptions {
+    freeCompilerArgs.addAll(
+      "-opt-in=org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi",
+    )
+  }
 }
 
 dependencies {

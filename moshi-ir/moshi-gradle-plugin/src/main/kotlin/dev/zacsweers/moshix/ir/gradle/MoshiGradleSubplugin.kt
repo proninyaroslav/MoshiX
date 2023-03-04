@@ -47,7 +47,7 @@ class MoshiGradleSubplugin : KotlinCompilerPluginSupportPlugin {
     target.extensions.create("moshi", MoshiPluginExtension::class.java)
   }
 
-  override fun getCompilerPluginId(): String = "moshi-compiler-plugin"
+  override fun getCompilerPluginId(): String = "dev.zacsweers.moshix.compiler"
 
   override fun getPluginArtifact(): SubpluginArtifact =
     SubpluginArtifact(
@@ -80,8 +80,8 @@ class MoshiGradleSubplugin : KotlinCompilerPluginSupportPlugin {
 
     if (generateProguardRules) {
       val resourceOutputDir = getMoshiXResourceOutputDir(project, sourceSetName)
-      val compilationTask = kotlinCompilation.compileKotlinTask
-      compilationTask.outputs.dirs(resourceOutputDir)
+      val compilationTask = kotlinCompilation.compileTaskProvider
+      compilationTask.configure { it.outputs.dirs(resourceOutputDir) }
       val processResourcesTaskName =
         (kotlinCompilation as? KotlinCompilationWithResources)?.processResourcesTaskName
           ?: "processResources"

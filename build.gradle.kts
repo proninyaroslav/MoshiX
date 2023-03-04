@@ -17,29 +17,18 @@
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import java.net.URL
 import org.jetbrains.dokka.gradle.DokkaTask
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
-buildscript {
-  dependencies {
-    classpath(
-      kotlin(
-        "gradle-plugin",
-        version = (System.getenv()["MOSHIX_KOTLIN"] ?: libs.versions.kotlin.get())
-      )
-    )
-    // Include our included build
-    classpath("dev.zacsweers.moshix:moshi-gradle-plugin")
-  }
-}
-
 plugins {
-  kotlin("jvm") version (System.getenv()["MOSHIX_KOTLIN"] ?: libs.versions.kotlin.get()) apply false
+  alias(libs.plugins.kotlinJvm) apply false
   alias(libs.plugins.ksp) apply false
   alias(libs.plugins.dokka) apply false
   alias(libs.plugins.mavenPublish) apply false
   alias(libs.plugins.spotless)
   alias(libs.plugins.kotlinBinaryCompatibilityValidator)
+  alias(libs.plugins.moshix) apply false
 }
 
 apiValidation {
@@ -65,7 +54,7 @@ spotless {
   java {
     googleJavaFormat(libs.versions.gjf.get())
     target("**/*.java")
-    targetExclude("**/spotless.java", "**/build/**")
+    targetExclude("**/spotless.java", "**/build/**", "**/.gradle/**")
   }
   kotlin {
     ktfmt(ktfmtVersion).googleStyle()
@@ -87,35 +76,23 @@ spotless {
 }
 
 subprojects {
-  repositories {
-    mavenCentral()
-    // Kotlin bootstrap repository, useful for testing against Kotlin dev builds. Usually only
-    // tested on CI shadow jobs
-    // https://kotlinlang.slack.com/archives/C0KLZSCHF/p1616514468003200?thread_ts=1616509748.001400&cid=C0KLZSCHF
-    maven("https://maven.pkg.jetbrains.space/kotlin/p/kotlin/bootstrap") {
-      name = "Kotlin-Bootstrap"
-      content {
-        // this repository *only* contains Kotlin artifacts (don't try others here)
-        includeGroupByRegex("org\\.jetbrains.*")
-      }
-    }
-  }
-  val releaseVersion = project.findProperty("moshix.javaReleaseVersion")?.toString() ?: "8"
-  val release = releaseVersion.toInt()
   pluginManager.withPlugin("java") {
+    // javaReleaseVersion can be set to override the global version
+    val jvmTargetProvider =
+      provider<String> { findProperty("moshix.javaReleaseVersion") as? String? }
+        .orElse(libs.versions.jvmTarget)
+        .map(String::toInt)
     configure<JavaPluginExtension> { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
-    project.tasks.withType<JavaCompile>().configureEach { options.release.set(release) }
+    project.tasks.withType<JavaCompile>().configureEach { options.release.set(jvmTargetProvider) }
   }
   pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
     tasks.withType<KotlinCompile>().configureEach {
-      kotlinOptions {
-        jvmTarget = libs.versions.jvmTarget.get()
-        @Suppress("SuspiciousCollectionReassignment")
-        freeCompilerArgs +=
-          listOf("-Xjsr305=strict", "-progressive", "-opt-in=kotlin.RequiresOptIn")
+      compilerOptions {
+        jvmTarget.set(libs.versions.jvmTarget.map(JvmTarget::fromTarget))
+        freeCompilerArgs.addAll("-Xjsr305=strict", "-progressive")
         // TODO disabled because Gradle's Kotlin handling is silly
         //  https://github.com/gradle/gradle/issues/16779
-        //        allWarningsAsErrors = true
+        //  allWarningsAsErrors = true
       }
     }
     if (
@@ -138,13 +115,10 @@ subprojects {
       // Can't do automatic release due to publishing both a plugin and regular artifacts
       publishToMavenCentral()
     }
-  }
-  // configuration required to produce unique META-INF/*.kotlin_module file names
-  tasks.withType<KotlinCompile> {
-    kotlinOptions {
-      if (project.hasProperty("POM_ARTIFACT_ID")) {
-        moduleName = project.property("POM_ARTIFACT_ID") as String
-      }
+
+    // configuration required to produce unique META-INF/*.kotlin_module file names
+    tasks.withType<KotlinCompile>().configureEach {
+      compilerOptions { moduleName.set(project.property("POM_ARTIFACT_ID") as String) }
     }
   }
 }

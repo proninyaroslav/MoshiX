@@ -1,6 +1,81 @@
 Changelog
 =========
 
+Version 0.21.0
+--------------
+
+_2022-12-28_
+
+#### **New:** Update to Kotlin `1.8.0`.
+- For moshi-ir, this release is only compatible with Kotlin 1.8 or later.
+- Migrate the IR and FIR plugins to new `CompilerPluginRegistrar` entrypoint API.
+
+#### **New:** Experimental support for the new K2 compiler in moshi-ir.
+
+Note this comes with several caveats:
+- There is no FIR plugin in moshi-ir itself (not needed). This just marks itself as compatible with the new compiler and avoids using incompatible IR APIs.
+- This only works if proguard rule generation is disabled, as there is no support in FIR currently for generating files.
+- K2 compiler itself is extremely experimental.
+
+In short, this is only really to unblock anyone doing their own testing of K2 and don't want this
+plugin to disable it. If you see any issues, please file a bug here and disable K2 in your project
+in the meantime.
+
+#### Misc
+- Update JVM target to `11`.
+- Update Anvil `compiler-utils` to `2.4.3`.
+
+Version 0.20.0
+--------------
+
+_2022-12-04_
+
+#### **New:** `@FallbackJsonAdapter`
+
+moshi-sealed now supports a new `@FallbackJsonAdapter`. This is a proxy to Moshi's `PolymorphicJsonAdapter.withFallbackJsonAdapter()`. This allows you to specify a custom `JsonAdapter` to handle cases of unrecognized type labels in decoding. It's advanced usage and not recommended for regular cases.
+
+The specified `JsonAdapter` must have a public constructor with no parameters or a single `Moshi` parameter.
+
+```kotlin
+@FallbackJsonAdapter(FrogFallbackJsonAdapter::class)
+@JsonClass(generateAdapter = true, generator = "sealed:type")
+sealed class Frog {
+
+  @JsonClass(generateAdapter = true)
+  @TypeLabel("original", null)
+  data class OriginalFrog(...)
+
+  @JsonClass(generateAdapter = true)
+  @TypeLabel("poisonous")
+  data class PoisonousFrog(...)
+
+  class FrogFallbackJsonAdapter(moshi: Moshi) : JsonAdapter<Frog>() {
+    private val delegate = moshi.adapter<OriginalFrog>()
+    override fun fromJson(reader: JsonReader): Frog? {
+      // Default to original frog
+      return delegate.fromJson(reader)
+    }
+
+    //...
+  }
+}
+```
+
+#### ~**New:** Experimental support for the new K2 compiler in moshi-ir.~
+
+**Edit:** this isn't usable in this release, don't try to use it!
+
+#### Misc
+
+* **Enhancement:** Generate extra proguard rules for `@NestedSealed` types to prevent R8 from inlining the parent sealed type into the subtype in some cases.
+* **Enhancement:** Proguard generation in moshi-ir now uses [Anvil](https://github.com/square/anvil)'s more optimized compiler util APIs.
+* **Enhancement:** Check and report more error cases in moshi-ir and moshi-sealed code gen.
+* **Fix:** moshi-ir now properly generates proguard rules for moshi-sealed types.
+* **Fix:** track `@NestedSealed` types as originating files in moshi-sealed KSP.
+* **Enhancement:** Substantially improved KSP and IR test coverage of error cases.
+* Update to Kotlin `1.7.22`.
+* Update to KSP `1.7.22-1.0.8`.
+
 Version 0.19.0
 --------------
 

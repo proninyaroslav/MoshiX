@@ -23,6 +23,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocationWithRange
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSourceLocation
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.codegen.CompilationException
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.DescriptorVisibility
 import org.jetbrains.kotlin.descriptors.Modality
@@ -74,6 +75,8 @@ import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.functions
 import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.ir.util.parentClassOrNull
+import org.jetbrains.kotlin.name.CallableId
+import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.util.OperatorNameConventions
@@ -163,14 +166,10 @@ internal fun IrPluginContext.createIrBuilder(symbol: IrSymbol): DeclarationIrBui
 }
 
 internal fun IrPluginContext.irType(
-  qualifiedName: String,
+  classId: ClassId,
   nullable: Boolean = false,
   arguments: List<IrTypeArgument> = emptyList()
-): IrType =
-  referenceClass(FqName(qualifiedName))!!.createType(
-    hasQuestionMark = nullable,
-    arguments = arguments
-  )
+): IrType = referenceClass(classId)!!.createType(hasQuestionMark = nullable, arguments = arguments)
 
 // returns null: Any? for boxed types and 0: <number type> for primitives
 internal fun IrBuilderWithScope.defaultPrimitiveValue(
@@ -203,9 +202,9 @@ internal val IrProperty.type: IrType
       ?: setter?.valueParameters?.first()?.type ?: backingField?.type
         ?: error("No type for property $name")
 
-internal fun DescriptorVisibility.checkIsVisibile() {
-  require(this == DescriptorVisibilities.PUBLIC || this == DescriptorVisibilities.INTERNAL) {
-    "Visibility must be one of public or internal. Is $name"
+internal fun DescriptorVisibility.checkIsVisible() {
+  if (this != DescriptorVisibilities.PUBLIC && this != DescriptorVisibilities.INTERNAL) {
+    throw CompilationException("Visibility must be one of public or internal. Is $name", null, null)
   }
 }
 
@@ -256,7 +255,8 @@ internal fun IrBuilderWithScope.irBinOp(
   rhs: IrExpression
 ): IrExpression {
   val classFqName = (lhs.type as IrSimpleType).classOrNull!!.owner.fqNameWhenAvailable!!
-  val symbol = pluginContext.referenceFunctions(classFqName.child(name)).single()
+  val symbol =
+    pluginContext.referenceFunctions(CallableId(ClassId.topLevel(classFqName), name)).single()
   return irInvoke(lhs, symbol, rhs)
 }
 

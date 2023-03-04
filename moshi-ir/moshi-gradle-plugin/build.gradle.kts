@@ -16,18 +16,22 @@
 
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import org.jetbrains.dokka.gradle.DokkaTask
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-  id("org.jetbrains.kotlin.jvm") version "1.7.20"
-  id("java-gradle-plugin")
-  id("org.jetbrains.dokka") version "1.7.20"
-  id("com.vanniktech.maven.publish") version "0.22.0"
-  id("com.diffplug.spotless") version "6.11.0"
+  alias(libs.plugins.kotlinJvm)
+  `java-gradle-plugin`
+  alias(libs.plugins.dokka)
+  alias(libs.plugins.mavenPublish)
+  alias(libs.plugins.spotless)
 }
 
 java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
 
-tasks.withType<JavaCompile>().configureEach { options.release.set(8) }
+tasks.withType<JavaCompile>().configureEach {
+  options.release.set(libs.versions.jvmTarget.map(String::toInt))
+}
 
 // region Version.kt template for setting the project version in the build
 sourceSets { main { java.srcDir("$buildDir/generated/sources/version-templates/kotlin/main") } }
@@ -42,13 +46,11 @@ val copyVersionTemplatesProvider =
   }
 // endregion
 
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+tasks.withType<KotlinCompile>().configureEach {
   dependsOn(copyVersionTemplatesProvider)
-  kotlinOptions {
-    @Suppress("SuspiciousCollectionReassignment")
-    freeCompilerArgs +=
-      listOf("-opt-in=kotlin.RequiresOptIn", "-opt-in=kotlin.ExperimentalStdlibApi")
-    jvmTarget = "1.8"
+  compilerOptions {
+    freeCompilerArgs.addAll("-opt-in=kotlin.ExperimentalStdlibApi")
+    jvmTarget.set(libs.versions.jvmTarget.map(JvmTarget::fromTarget))
   }
 }
 
@@ -79,8 +81,8 @@ spotless {
     endWithNewline()
   }
   kotlin {
-    target("**/*.kt")
-    ktfmt("0.37").googleStyle()
+    target("src/**/*.kt")
+    ktfmt(libs.versions.ktfmt.get()).googleStyle()
     trimTrailingWhitespace()
     endWithNewline()
     licenseHeaderFile("../../spotless/spotless.kt")

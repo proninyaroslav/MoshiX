@@ -23,17 +23,14 @@ plugins {
 }
 
 tasks.named<KotlinCompile>("compileTestKotlin") {
-  kotlinOptions {
-    @Suppress("SuspiciousCollectionReassignment")
-    freeCompilerArgs += "-opt-in=kotlin.ExperimentalStdlibApi"
-  }
+  compilerOptions { freeCompilerArgs.add("-opt-in=kotlin.ExperimentalStdlibApi") }
 }
 
 dependencies {
   implementation(libs.kotlin.metadata)
   implementation(libs.moshi)
   kspTest(libs.moshi.codegen)
-  testImplementation("org.assertj:assertj-core:3.23.1")
+  testImplementation("org.assertj:assertj-core:3.24.2")
   testImplementation(libs.junit)
   testImplementation(libs.truth)
 }

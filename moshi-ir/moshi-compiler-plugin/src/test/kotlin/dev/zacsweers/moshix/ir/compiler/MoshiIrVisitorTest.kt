@@ -23,15 +23,25 @@ import com.tschuchort.compiletesting.PluginOption
 import com.tschuchort.compiletesting.SourceFile
 import com.tschuchort.compiletesting.SourceFile.Companion.kotlin
 import java.io.File
+import org.jetbrains.kotlin.compiler.plugin.CliOption
 import org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor
 import org.jetbrains.kotlin.config.JvmTarget
+import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.junit.runners.Parameterized
 
-class MoshiIrVisitorTest {
+@RunWith(Parameterized::class)
+class MoshiIrVisitorTest(private val useK2: Boolean) {
+
+  companion object {
+    @JvmStatic @Parameterized.Parameters(name = "useK2 = {0}") fun data() = listOf(true, false)
+  }
 
   @Rule @JvmField var temporaryFolder: TemporaryFolder = TemporaryFolder()
 
@@ -567,8 +577,11 @@ class MoshiIrVisitorTest {
 
   @Test
   fun `Processor should generate comprehensive proguard rules`() {
+    assumeFalse(useK2)
     val compilation =
       prepareCompilation(
+        generatedAnnotation = null,
+        generateProguardRules = true,
         kotlin(
           "source.kt",
           """
@@ -839,45 +852,315 @@ class MoshiIrVisitorTest {
     assertThat(resourcesDir.walkTopDown().filter { it.extension == "pro" }.toList()).isEmpty()
   }
 
-  private fun prepareCompilation(vararg sourceFiles: SourceFile): KotlinCompilation {
-    return prepareCompilation(
-      generatedAnnotation = null,
-      generateProguardRules = true,
-      *sourceFiles
-    )
+  @Test
+  fun `Enabling proguard rule gen with K2 should error`() {
+    assumeTrue(useK2)
+    val compilation =
+      prepareCompilation(
+        null,
+        generateProguardRules = true,
+        kotlin(
+          "source.kt",
+          """
+          package testPackage
+          import com.squareup.moshi.JsonClass
+
+          @JsonClass(generateAdapter = true)
+          data class Example(val firstName: String)
+          """
+        )
+      )
+    val result = compilation.compile()
+    assertThat(result.exitCode).isEqualTo(COMPILATION_ERROR)
+
+    assertThat(result.messages)
+      .contains(
+        "moshi-ir's proguard rule generation currently doesn't support the experimental K2 compiler"
+      )
+  }
+
+  @Test
+  fun sealedProguardGenSmokeTest() {
+    assumeFalse(useK2)
+    val source =
+      kotlin(
+        "BaseType.kt",
+        """
+      package test
+      import com.squareup.moshi.JsonClass
+      import dev.zacsweers.moshix.sealed.annotations.TypeLabel
+      import dev.zacsweers.moshix.sealed.annotations.NestedSealed
+
+      @JsonClass(generateAdapter = true, generator = "sealed:type")
+      sealed class BaseType {
+        @TypeLabel("a", ["aa"])
+        class TypeA : BaseType()
+        @TypeLabel("b")
+        class TypeB : BaseType()
+        @NestedSealed
+        sealed class TypeC : BaseType() {
+          @TypeLabel("c")
+          class TypeCImpl : TypeC()
+        }
+      }
+    """
+      )
+
+    val compilation = prepareCompilation(null, generateProguardRules = true, source)
+    val result = compilation.compile()
+    assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+
+    val generatedSourcesDir = resourcesDir.resolve("META-INF/proguard")
+    val proguardFiles = generatedSourcesDir.walkTopDown().filter { it.extension == "pro" }.toList()
+    check(proguardFiles.isNotEmpty())
+    proguardFiles.forEach { generatedFile ->
+      when (generatedFile.nameWithoutExtension) {
+        "moshi-test.BaseType" ->
+          assertThat(generatedFile.readText())
+            .contains(
+              """
+                -if class test.BaseType
+                -keepnames class test.BaseType
+                -if class test.BaseType
+                -keep class test.BaseTypeJsonAdapter {
+                    public <init>(com.squareup.moshi.Moshi);
+                }
+
+                # Conditionally keep this adapter for every possible nested subtype that uses it.
+                -if class test.BaseType.TypeC
+                -keep class test.BaseTypeJsonAdapter {
+                    public <init>(com.squareup.moshi.Moshi);
+                }
+              """
+                .trimIndent()
+            )
+        else -> error("Unrecognized proguard file: $generatedFile")
+      }
+    }
+  }
+
+  @Test
+  fun nullAndFallback() {
+    val source =
+      kotlin(
+        "BaseType.kt",
+        """
+      package test
+      import com.squareup.moshi.JsonClass
+      import dev.zacsweers.moshix.sealed.annotations.TypeLabel
+      import dev.zacsweers.moshix.sealed.annotations.DefaultNull
+      import dev.zacsweers.moshix.sealed.annotations.FallbackJsonAdapter
+      import com.squareup.moshi.JsonReader
+      import com.squareup.moshi.JsonWriter
+      import com.squareup.moshi.JsonAdapter
+
+      class BaseTypeFallback : JsonAdapter<String>() {
+        override fun fromJson(reader: JsonReader): String? {
+          return null
+        }
+
+        override fun toJson(writer: JsonWriter, value: String?) {
+        }
+      }
+
+      @FallbackJsonAdapter(BaseTypeFallback::class)
+      @DefaultNull
+      @JsonClass(generateAdapter = true, generator = "sealed:type")
+      sealed class BaseType {
+        @TypeLabel("a")
+        class TypeA : BaseType()
+      }
+    """
+      )
+
+    val result = compile(source)
+    assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.COMPILATION_ERROR)
+    assertThat(result.messages)
+      .contains("Only one of @DefaultNull or @FallbackJsonAdapter can be used at a time")
+  }
+
+  @Test
+  fun nullAndDefaultObject() {
+    val source =
+      kotlin(
+        "BaseType.kt",
+        """
+      package test
+      import com.squareup.moshi.JsonClass
+      import dev.zacsweers.moshix.sealed.annotations.TypeLabel
+      import dev.zacsweers.moshix.sealed.annotations.DefaultNull
+      import dev.zacsweers.moshix.sealed.annotations.DefaultObject
+
+      @DefaultNull
+      @JsonClass(generateAdapter = true, generator = "sealed:type")
+      sealed class BaseType {
+        @TypeLabel("a")
+        class TypeA : BaseType()
+        @DefaultObject
+        object TypeB : BaseType()
+      }
+    """
+      )
+
+    val result = compile(source)
+    assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.COMPILATION_ERROR)
+    assertThat(result.messages).contains("Cannot have both @DefaultNull and @DefaultObject")
+  }
+
+  @Test
+  fun defaultObjectAndFallbackAdapter() {
+    val source =
+      kotlin(
+        "BaseType.kt",
+        """
+      package test
+      import com.squareup.moshi.JsonClass
+      import dev.zacsweers.moshix.sealed.annotations.TypeLabel
+      import dev.zacsweers.moshix.sealed.annotations.DefaultObject
+      import dev.zacsweers.moshix.sealed.annotations.FallbackJsonAdapter
+      import com.squareup.moshi.JsonReader
+      import com.squareup.moshi.JsonWriter
+      import com.squareup.moshi.JsonAdapter
+
+      class BaseTypeFallback : JsonAdapter<String>() {
+        override fun fromJson(reader: JsonReader): String? {
+          return null
+        }
+
+        override fun toJson(writer: JsonWriter, value: String?) {
+        }
+      }
+
+      @FallbackJsonAdapter(BaseTypeFallback::class)
+      @JsonClass(generateAdapter = true, generator = "sealed:type")
+      sealed class BaseType {
+        @TypeLabel("a")
+        class TypeA : BaseType()
+        @DefaultObject
+        object TypeB : BaseType()
+      }
+    """
+      )
+
+    val result = compile(source)
+    assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.COMPILATION_ERROR)
+    assertThat(result.messages)
+      .contains(
+        "Only one of @DefaultObject, @DefaultNull, or @FallbackJsonAdapter can be used at a time"
+      )
+  }
+
+  @Test
+  fun invisibleFallbackAdapterConstructor() {
+    val source =
+      kotlin(
+        "BaseType.kt",
+        """
+      package test
+      import com.squareup.moshi.JsonClass
+      import dev.zacsweers.moshix.sealed.annotations.TypeLabel
+      import dev.zacsweers.moshix.sealed.annotations.DefaultObject
+      import dev.zacsweers.moshix.sealed.annotations.FallbackJsonAdapter
+      import com.squareup.moshi.JsonReader
+      import com.squareup.moshi.JsonWriter
+      import com.squareup.moshi.JsonAdapter
+
+      class BaseTypeFallback private constructor() : JsonAdapter<String>() {
+        override fun fromJson(reader: JsonReader): String? {
+          return null
+        }
+
+        override fun toJson(writer: JsonWriter, value: String?) {
+        }
+      }
+
+      @FallbackJsonAdapter(BaseTypeFallback::class)
+      @JsonClass(generateAdapter = true, generator = "sealed:type")
+      sealed class BaseType {
+        @TypeLabel("a")
+        class TypeA : BaseType()
+        @DefaultObject
+        object TypeB : BaseType()
+      }
+    """
+      )
+
+    val result = compile(source)
+    assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.COMPILATION_ERROR)
+    assertThat(result.messages).contains("Visibility must be one of public or internal. Is private")
+  }
+
+  @Test
+  fun invalidConstructorParam() {
+    val source =
+      kotlin(
+        "BaseType.kt",
+        """
+      package test
+      import com.squareup.moshi.JsonClass
+      import dev.zacsweers.moshix.sealed.annotations.TypeLabel
+      import dev.zacsweers.moshix.sealed.annotations.FallbackJsonAdapter
+      import dev.zacsweers.moshix.sealed.runtime.internal.ObjectJsonAdapter
+
+      @FallbackJsonAdapter(ObjectJsonAdapter::class)
+      @JsonClass(generateAdapter = true, generator = "sealed:type")
+      sealed class BaseType {
+        @TypeLabel("a")
+        class TypeA : BaseType()
+      }
+    """
+      )
+
+    val result = compile(source)
+    assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.COMPILATION_ERROR)
+    assertThat(result.messages)
+      .contains("Fallback adapter type's primary constructor can only have a Moshi parameter")
   }
 
   private fun prepareCompilation(
     generatedAnnotation: String? = null,
-    generateProguardRules: Boolean = true,
+    generateProguardRules: Boolean = false,
     vararg sourceFiles: SourceFile
   ): KotlinCompilation {
     return KotlinCompilation().apply {
       workingDir = compilationDir
-      compilerPlugins = listOf(MoshiComponentRegistrar())
+      compilerPluginRegistrars = listOf(MoshiComponentRegistrar())
       val processor = MoshiCommandLineProcessor()
       commandLineProcessors = listOf(processor)
       pluginOptions = buildList {
-        add(processor.option(KEY_ENABLED, "true"))
-        add(processor.option(KEY_DEBUG, "false")) // Enable when needed for extra debugging
-        add(processor.option(KEY_GENERATE_PROGUARD_RULES, generateProguardRules.toString()))
-        add(processor.option(KEY_RESOURCES_OUTPUT_DIR, resourcesDir))
+        add(processor.option(MoshiCommandLineProcessor.OPTION_ENABLED, "true"))
+        add(
+          processor.option(MoshiCommandLineProcessor.OPTION_DEBUG, "false")
+        ) // Enable when needed for extra debugging
+        add(
+          processor.option(
+            MoshiCommandLineProcessor.OPTION_GENERATE_PROGUARD_RULES,
+            generateProguardRules.toString()
+          )
+        )
+        add(processor.option(MoshiCommandLineProcessor.OPTION_RESOURCES_OUTPUT_DIR, resourcesDir))
+        add(processor.option(MoshiCommandLineProcessor.OPTION_ENABLE_SEALED, "true"))
         if (generatedAnnotation != null) {
-          processor.option(KEY_GENERATED_ANNOTATION, generatedAnnotation)
+          processor.option(
+            MoshiCommandLineProcessor.OPTION_GENERATED_ANNOTATION,
+            generatedAnnotation
+          )
         }
       }
       inheritClassPath = true
       sources = sourceFiles.asList()
       verbose = false
-      jvmTarget = JvmTarget.fromString(System.getenv()["ci_java_version"] ?: "11")!!.description
+      jvmTarget = JvmTarget.fromString(System.getProperty("moshix.jvmTarget"))!!.description
+      supportsK2 = true
+      this.useK2 = this@MoshiIrVisitorTest.useK2
     }
   }
 
-  private fun CommandLineProcessor.option(key: Any, value: Any?): PluginOption {
-    return PluginOption(pluginId, key.toString(), value.toString())
+  private fun CommandLineProcessor.option(key: CliOption, value: Any?): PluginOption {
+    return PluginOption(pluginId, key.optionName, value.toString())
   }
 
   private fun compile(vararg sourceFiles: SourceFile): KotlinCompilation.Result {
-    return prepareCompilation(null, true, *sourceFiles).compile()
+    return prepareCompilation(null, false, *sourceFiles).compile()
   }
 }

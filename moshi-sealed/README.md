@@ -3,7 +3,7 @@ Moshi-sealed
 
 Reflective and code gen implementations for serializing Kotlin sealed classes via Moshi polymorphic adapters.
 
-Simple annotated a sealed class with `@JsonClass` with a `generator` value of `sealed:{typeLabel}`.
+Simply annotate a sealed class with `@JsonClass` with a `generator` value of `sealed:{typeLabel}`.
  `{typeLabel}` is the value of the type label that should be used for a Moshi 
  `PolymorphicJsonAdapterFactory`. Annotate subtypes with `@TypeLabel` to indicate their type label 
  value. One `object` can be used as an unknown default value via `@DefaultObject`, or the sealed 
@@ -124,6 +124,17 @@ Caveats:
     .build()
   ```
 
+#### `@FallbackJsonAdapter`
+
+In some cases, you may want to use a fallback `JsonAdapter` for a sealed type. To do this, you can annotate a sealed 
+type with `@FallbackJsonAdapter` and specify a custom `JsonAdapter` class for it to use. This adapter will be created at
+runtime and provided to the underlying Moshi `PolymorphicJsonAdapterFactory.withFallbackJsonAdapter(...)`.
+
+**Note**: This will only cover cases of unrecognized type labels. Missing type labels are [not supported currently by Moshi](https://github.com/square/moshi/issues/1512).
+
+This should usually only be reserved for advanced usage and is not recommended for most cases. You can only use one of
+`@DefaultObject`, `@DefaultNull`, or `@FallbackJsonAdapter` on any given sealed type.
+
 ### Installation
 
 Moshi-sealed can be used via reflection or code generation. Note that you must include the 
@@ -242,7 +253,7 @@ License
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+       https://www.apache.org/licenses/LICENSE-2.0
 
     Unless required by applicable law or agreed to in writing, software
     distributed under the License is distributed on an "AS IS" BASIS,
